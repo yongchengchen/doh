@@ -29,6 +29,10 @@ async function handleRequest(request, ctx) {
         return new Response("Cache purged", { status: 200 })
     }
 
+    if (pathname === '/.well-known/dns-query') {
+        return Response.redirect('/dns-query', 301);
+    }
+
     if (!pathname.startsWith(path)) return r404
 
     // JSON DoH (GET)
