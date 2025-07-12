@@ -74,12 +74,12 @@ async function handleRequest(request, ctx) {
         }
 
         return fetch(doh, {
-        method: 'POST',
-        headers: {
-            'Accept': contype,
-            'Content-Type': contype
-        },
-        body: reqBody
+            method: 'POST',
+            headers: {
+                'Accept': contype,
+                'Content-Type': contype
+            },
+            body: reqBody
         })
     }
 
@@ -177,57 +177,79 @@ function parseDNSQuestion(buf) {
 }
 
 // Build minimal DNS wire-format response (only A/AAAA)
-function buildWireFormatResponse(name, type, ip, reqBuf) {
-  const encoder = new TextEncoder()
-  const nameParts = name.split('.')
-  const nameBuf = []
-  nameParts.forEach(part => {
-    const enc = encoder.encode(part)
-    nameBuf.push(enc.length)
-    nameBuf.push(...enc)
-  })
-  nameBuf.push(0) // end of name
-
-  const qtype = type === 'A' ? 1 : 28
-  const qclass = 1
-
-  const header = new Uint8Array(reqBuf.slice(0, 12)) // copy ID and flags
-  header[2] = 0x81 // QR=1, Opcode=0, AA=0, TC=0, RD=1
-  header[3] = 0x80 // RA=1, Z=0, RCODE=0
-
-  header[4] = 0; header[5] = 1  // QDCOUNT
-  header[6] = 0; header[7] = 1  // ANCOUNT
-  header[8] = 0; header[9] = 0
-  header[10] = 0; header[11] = 0
-
-  const question = new Uint8Array([
-    ...nameBuf,
-    0x00, qtype,
-    0x00, qclass
-  ])
-
-  const rdata = type === 'A'
-    ? ip.split('.').map(s => parseInt(s))
-    : ip.split(':').flatMap(h => {
-        const padded = h.padStart(4, '0')
-        return [parseInt(padded.slice(0, 2), 16), parseInt(padded.slice(2), 16)]
-      })
-
-  const answer = new Uint8Array([
-    ...nameBuf,
-    0x00, qtype,
-    0x00, qclass,
-    0x00, 0x00, 0x00, 0x3C,  // TTL 60s
-    0x00, rdata.length,
-    ...rdata
-  ])
-
-  const final = new Uint8Array(header.length + question.length + answer.length)
-  final.set(header, 0)
-  final.set(question, header.length)
-  final.set(answer, header.length + question.length)
-
-  return new Response(final, {
-    headers: { 'content-type': contype }
-  })
-}
+function buildWireFormatResponse(qname, type, ipValue, reqBuf) {
+    const encoder = new TextEncoder();
+  
+    // Convert name to wire format (label1.length + label1 + ... + 0)
+    const labels = qname.slice(0, -1).split('.');
+    const nameBuf = [];
+    for (const label of labels) {
+      const enc = encoder.encode(label);
+      nameBuf.push(enc.length, ...enc);
+    }
+    nameBuf.push(0); // terminator
+  
+    const nameBytes = Uint8Array.from(nameBuf);
+    const qtype = type === 'A' ? 1 : 28;
+    const qclass = 1;
+  
+    // Parse header from request
+    const id = reqBuf.slice(0, 2); // Copy request ID
+    const flags = new Uint8Array([0x81, 0x80]); // Standard response, recursion available
+    const qdcount = new Uint8Array([0x00, 0x01]);
+    const ancount = new Uint8Array([0x00, 0x01]);
+    const nscount = new Uint8Array([0x00, 0x00]);
+    const arcount = new Uint8Array([0x00, 0x00]);
+  
+    const header = concatUint8Arrays(id, flags, qdcount, ancount, nscount, arcount);
+  
+    // Build question section (name + type + class)
+    const question = concatUint8Arrays(
+      nameBytes,
+      new Uint8Array([0x00, qtype]), // QTYPE
+      new Uint8Array([0x00, qclass]) // QCLASS
+    );
+  
+    // Prepare IP address data
+    const ipStr = Array.isArray(ipValue) ? ipValue[0] : ipValue;
+    let rdata;
+    if (type === 'A') {
+      rdata = Uint8Array.from(ipStr.split('.').map(n => parseInt(n)));
+    } else if (type === 'AAAA') {
+      const segments = ipStr.split(':').map(s => parseInt(s || '0', 16));
+      rdata = new Uint8Array(16);
+      for (let i = 0; i < segments.length; i++) {
+        rdata[i * 2] = (segments[i] >> 8) & 0xff;
+        rdata[i * 2 + 1] = segments[i] & 0xff;
+      }
+    } else {
+      throw new Error("Unsupported record type");
+    }
+  
+    // Build answer section (name + type + class + ttl + rdlength + rdata)
+    const answer = concatUint8Arrays(
+      nameBytes,
+      new Uint8Array([0x00, qtype]), // TYPE
+      new Uint8Array([0x00, qclass]), // CLASS
+      new Uint8Array([0x00, 0x00, 0x00, 0x3C]), // TTL: 60s
+      new Uint8Array([0x00, rdata.length]), // RDLENGTH
+      rdata
+    );
+  
+    const packet = concatUint8Arrays(header, question, answer);
+    return new Response(packet, {
+      headers: { 'content-type': 'application/dns-message' }
+    });
+  }
+  
+  // Helper to merge Uint8Arrays
+  function concatUint8Arrays(...arrays) {
+    const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const arr of arrays) {
+      result.set(arr, offset);
+      offset += arr.length;
+    }
+    return result;
+  }
