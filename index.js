@@ -179,38 +179,31 @@ function parseDNSQuestion(buf) {
 // Build minimal DNS wire-format response (only A/AAAA)
 function buildWireFormatResponse(qname, type, ipValue, reqBuf) {
     const encoder = new TextEncoder();
-  
-    // Convert name to wire format (label1.length + label1 + ... + 0)
     const labels = qname.slice(0, -1).split('.');
     const nameBuf = [];
     for (const label of labels) {
       const enc = encoder.encode(label);
       nameBuf.push(enc.length, ...enc);
     }
-    nameBuf.push(0); // terminator
-  
+    nameBuf.push(0);
     const nameBytes = Uint8Array.from(nameBuf);
     const qtype = type === 'A' ? 1 : 28;
     const qclass = 1;
   
-    // Parse header from request
-    const id = reqBuf.slice(0, 2); // Copy request ID
-    const flags = new Uint8Array([0x81, 0x80]); // Standard response, recursion available
+    const id = new Uint8Array(reqBuf.slice(0, 2));
+    const flags = new Uint8Array([0x81, 0x80]);
     const qdcount = new Uint8Array([0x00, 0x01]);
     const ancount = new Uint8Array([0x00, 0x01]);
     const nscount = new Uint8Array([0x00, 0x00]);
     const arcount = new Uint8Array([0x00, 0x00]);
   
     const header = concatUint8Arrays(id, flags, qdcount, ancount, nscount, arcount);
-  
-    // Build question section (name + type + class)
     const question = concatUint8Arrays(
       nameBytes,
-      new Uint8Array([0x00, qtype]), // QTYPE
-      new Uint8Array([0x00, qclass]) // QCLASS
+      new Uint8Array([0x00, qtype]),
+      new Uint8Array([0x00, qclass])
     );
   
-    // Prepare IP address data
     const ipStr = Array.isArray(ipValue) ? ipValue[0] : ipValue;
     let rdata;
     if (type === 'A') {
@@ -223,33 +216,34 @@ function buildWireFormatResponse(qname, type, ipValue, reqBuf) {
         rdata[i * 2 + 1] = segments[i] & 0xff;
       }
     } else {
-      throw new Error("Unsupported record type");
+      throw new Error("Unsupported type");
     }
   
-    // Build answer section (name + type + class + ttl + rdlength + rdata)
     const answer = concatUint8Arrays(
       nameBytes,
-      new Uint8Array([0x00, qtype]), // TYPE
-      new Uint8Array([0x00, qclass]), // CLASS
-      new Uint8Array([0x00, 0x00, 0x00, 0x3C]), // TTL: 60s
-      new Uint8Array([0x00, rdata.length]), // RDLENGTH
+      new Uint8Array([0x00, qtype]),
+      new Uint8Array([0x00, qclass]),
+      new Uint8Array([0x00, 0x00, 0x00, 0x3C]),
+      new Uint8Array([0x00, rdata.length]),
       rdata
     );
   
     const packet = concatUint8Arrays(header, question, answer);
     return new Response(packet, {
-      headers: { 'content-type': 'application/dns-message' }
+      headers: { 'content-type': contype }
     });
   }
   
-  // Helper to merge Uint8Arrays
-  function concatUint8Arrays(...arrays) {
-    const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
-    const result = new Uint8Array(totalLength);
+function concatUint8Arrays(...arrays) {
+    const total = arrays.reduce((sum, a) => sum + a.length, 0);
+    const result = new Uint8Array(total);
     let offset = 0;
-    for (const arr of arrays) {
-      result.set(arr, offset);
-      offset += arr.length;
+    for (const a of arrays) {
+      if (!(a instanceof Uint8Array)) {
+        throw new TypeError("All elements must be Uint8Array");
+      }
+      result.set(a, offset);
+      offset += a.length;
     }
     return result;
-  }
+}
