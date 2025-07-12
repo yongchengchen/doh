@@ -44,13 +44,13 @@ async function handleRequest(request, ctx) {
         const dnsMap = await fetchLocalDNS()
 
         if (dnsMap[qname] && dnsMap[qname][type]) {
-        return buildJSONResponse(qname, type, dnsMap[qname][type])
+            return buildJSONResponse(qname, type, dnsMap[qname][type])
         }
 
         // fallback
         return fetch(dohjson + '?' + searchParams.toString(), {
-        method: 'GET',
-        headers: { 'Accept': jstontype }
+            method: 'GET',
+            headers: { 'Accept': jstontype }
         })
     }
 
@@ -60,13 +60,17 @@ async function handleRequest(request, ctx) {
         const question = parseDNSQuestion(reqBody)
 
         if (question) {
-        const { name, type } = question
-        const qname = name.endsWith('.') ? name : name + '.'
-        const dnsMap = await fetchLocalDNS()
+            const { name, type } = question
+            const qname = name.endsWith('.') ? name : name + '.'
+            const dnsMap = await fetchLocalDNS()
 
-        if (dnsMap[qname] && dnsMap[qname][type]) {
-            return buildWireFormatResponse(qname, type, dnsMap[qname][type], reqBody)
-        }
+            if (dnsMap[qname] && dnsMap[qname][type]) {
+                return buildWireFormatResponse(qname, type, dnsMap[qname][type], reqBody)
+            } else {
+                console.log("LocalDNS miss:", qname, type)
+            }
+        } else {
+            console.log("Failed to parse DNS question")
         }
 
         return fetch(doh, {
